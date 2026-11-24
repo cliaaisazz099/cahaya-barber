@@ -1,5 +1,5 @@
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect, type FormEvent } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 
@@ -14,7 +14,7 @@ import {
   AdminSchedulesView,
   AdminReviewsView,
 } from './components/admin/AdminPlaceholderViews'
-import { mockDb, type MockBooking } from './mock/mockData'
+import { mockDb, type MockBooking, type MockReview } from './mock/mockData'
 
 import './App.css'
 import './Booking.css'
@@ -45,45 +45,7 @@ const branches = [
   },
 ]
 
-const services = [
-  {
-    id: 'haircut',
-    name: 'Haircut',
-    description: 'Potong rambut sesuai gaya pilihanmu.',
-    time: 30,
-  },
-  {
-    id: 'coloring',
-    name: 'Coloring',
-    description: 'Layanan pewarnaan rambut profesional.',
-    time: 45,
-  },
-  {
-    id: 'perm',
-    name: 'Perm',
-    description: 'Ciptakan tekstur rambut lebih menarik.',
-    time: 45,
-  },
-  {
-    id: 'down-perm',
-    name: 'Down Perm',
-    description: 'Penataan rambut agar lebih rapi.',
-    time: 45,
-  },
-  {
-    id: 'massage',
-    name: 'Head Massage',
-    description: 'Relaksasi dengan pijat kepala.',
-    time: 30,
-  },
-]
-
-// Data kapster sementara untuk prototype.
-// Nantinya diganti dengan data dari Supabase.
-const barbers = [
-  { id: 'barber-1', name: 'Kapster 1' },
-  { id: 'barber-2', name: 'Kapster 2' },
-]
+// Layanan & Kapster diambil dinamis dari mockDb (katalog master dikelola Owner)
 
 const fadeUp = {
   hidden: { opacity: 0, y: 25 },
@@ -132,6 +94,98 @@ function getAvailableTimes(duration: number) {
   return times
 }
 
+function parseBookingTime(startsAt: string) {
+  // Jika format YYYY-MM-DDTHH:mm:ss tanpa timezone (format local default mock)
+  if (
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(startsAt) &&
+    !startsAt.includes('Z') &&
+    !startsAt.includes('+')
+  ) {
+    const [dPart, tPart] = startsAt.split('T')
+    const [hh, mm] = tPart.split(':').map(Number)
+    return {
+      dateStr: dPart,
+      startMinutes: hh * 60 + mm,
+    }
+  }
+
+  // Jika format ISO standar dengan Z atau offset
+  const d = new Date(startsAt)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return {
+    dateStr: `${y}-${m}-${day}`,
+    startMinutes: d.getHours() * 60 + d.getMinutes(),
+  }
+}
+
+// ==========================================
+// STAR RATING INPUT COMPONENT
+// ==========================================
+
+function StarRatingInput({
+  value,
+  onChange,
+}: {
+  value: number
+  onChange: (val: number) => void
+}) {
+  const [hover, setHover] = useState(0)
+
+  const labels: Record<number, string> = {
+    1: 'Sangat Buruk 😞',
+    2: 'Kurang Puas 😐',
+    3: 'Cukup Baik 🙂',
+    4: 'Puas & Rapi 😊',
+    5: 'Sangat Puas & Rekomended! ⭐',
+  }
+
+  const currentVal = hover || value
+
+  return (
+    <div style={{ margin: '14px 0', textAlign: 'center' }}>
+      <div
+        style={{
+          display: 'inline-flex',
+          gap: '10px',
+          fontSize: '36px',
+          cursor: 'pointer',
+        }}
+      >
+        {[1, 2, 3, 4, 5].map((star) => (
+          <span
+            key={star}
+            onMouseEnter={() => setHover(star)}
+            onMouseLeave={() => setHover(0)}
+            onClick={() => onChange(star)}
+            style={{
+              color: star <= currentVal ? '#fbbf24' : '#4a3f35',
+              transition: 'color 0.15s ease, transform 0.15s ease',
+              transform: star <= currentVal ? 'scale(1.15)' : 'scale(1)',
+              display: 'inline-block',
+              userSelect: 'none',
+              padding: '0 2px',
+            }}
+          >
+            ★
+          </span>
+        ))}
+      </div>
+      <div
+        style={{
+          marginTop: '6px',
+          fontSize: '13px',
+          color: '#c9a66b',
+          fontWeight: 650,
+        }}
+      >
+        {labels[currentVal] || 'Pilih Bintang (1 - 5)'}
+      </div>
+    </div>
+  )
+}
+
 // ==========================================
 // KOMPONEN UTAMA
 // ==========================================
@@ -152,6 +206,20 @@ function CustomerHome() {
   const [customerPhone, setCustomerPhone] = useState('')
   const [customerNote, setCustomerNote] = useState('')
 
+  // Tiket Search Modal states
+  const [ticketModalOpen, setTicketModalOpen] = useState(false)
+  const [ticketSearchQuery, setTicketSearchQuery] = useState('')
+  const [ticketSearchError, setTicketSearchError] = useState('')
+
+  // Review states
+  const [reviewRating, setReviewRating] = useState(5)
+  const [reviewComment, setReviewComment] = useState('')
+  const [reviewError, setReviewError] = useState('')
+  const [submittingReview, setSubmittingReview] = useState(false)
+  const [customerReviews, setCustomerReviews] = useState<MockReview[]>(() =>
+    mockDb.getReviews()
+  )
+
   // Memori Reservasi Aktif Perangkat (Device Persistence)
   const [activeBooking, setActiveBooking] = useState<MockBooking | null>(() => {
     try {
@@ -159,12 +227,22 @@ function CustomerHome() {
       if (!savedId) return null
       const all = mockDb.getBookings()
       const found = all.find((b) => b.id === savedId)
-      // Jika statusnya masih aktif (pending atau confirmed), tetap tampilkan tiketnya
-      if (found && (found.status === 'pending' || found.status === 'confirmed')) {
+      // Tiket dianggap aktif dan ditampilkan otomatis HANYA jika:
+      // status 'pending', 'confirmed', atau 'completed' TAPI BELUM diulas (!found.has_reviewed)
+      if (
+        found &&
+        (found.status === 'pending' ||
+          found.status === 'confirmed' ||
+          (found.status === 'completed' && !found.has_reviewed))
+      ) {
         return found
       }
-      // Jika sudah selesai atau dibatalkan, bersihkan memori perangkat
-      if (found && (found.status === 'completed' || found.status === 'cancelled')) {
+      // Jika sudah selesai DAN sudah diulas, atau jika dibatalkan, bersihkan memori perangkat
+      if (
+        found &&
+        ((found.status === 'completed' && found.has_reviewed) ||
+          found.status === 'cancelled')
+      ) {
         localStorage.removeItem('cahaya_customer_active_booking_id')
       }
       return null
@@ -173,11 +251,29 @@ function CustomerHome() {
     }
   })
 
+  // Data kapster dinamis dari mock store
+  const allBarbers = useMemo(() => mockDb.getBarbers(), [])
+
+  // Data layanan dinamis dari mock store
+  const allServices = useMemo(() => mockDb.getServices(), [])
+  const services = useMemo(
+    () => allServices.filter((s) => s.is_active && !s.is_archived),
+    [allServices]
+  )
+
+  // Kapster aktif yang bertugas di cabang terpilih (1 kapster = 1 cabang tetap)
+  const availableBarbers = useMemo(() => {
+    if (!selectedBranch) return []
+    return allBarbers.filter(
+      (b) => b.branch_id === selectedBranch && b.is_active && !b.is_archived
+    )
+  }, [selectedBranch, allBarbers])
+
   const currentBranch = branches.find(
     (branch) => branch.id === selectedBranch,
   )
 
-  const currentBarber = barbers.find(
+  const currentBarber = allBarbers.find(
     (barber) => barber.id === selectedBarber,
   )
 
@@ -190,16 +286,71 @@ function CustomerHome() {
     [currentService],
   )
 
+  const [bookingsVersion, setBookingsVersion] = useState(0)
+
+  useEffect(() => {
+    const syncBookings = () => setBookingsVersion((v) => v + 1)
+    window.addEventListener('storage', syncBookings)
+    window.addEventListener('focus', syncBookings)
+    window.addEventListener('cahaya-storage-sync', syncBookings)
+    return () => {
+      window.removeEventListener('storage', syncBookings)
+      window.removeEventListener('focus', syncBookings)
+      window.removeEventListener('cahaya-storage-sync', syncBookings)
+    }
+  }, [])
+
+  // Data reservasi aktif dari mock store (sinkron realtime)
+  const currentBookings = useMemo(() => {
+    void bookingsVersion
+    return mockDb.getBookings()
+  }, [bookingsVersion])
+
+  // Validasi slot collision: Cek apakah slot jam tertentu bentrok dengan jadwal kapster yang sudah terisi
+  const isSlotBooked = (timeStr: string): boolean => {
+    if (!selectedBarber || !selectedDate || !timeStr) return false
+
+    const [slotH, slotM] = timeStr.split(':').map(Number)
+    const slotStart = slotH * 60 + slotM
+    const slotEnd = slotStart + (currentService?.time ?? 30)
+
+    return currentBookings.some((b) => {
+      // 1. Kapster harus sama
+      if (b.barber_id !== selectedBarber) return false
+
+      // 2. Status yang menempati slot HANYA reservasi yang sedang aktif: 'pending' atau 'confirmed'
+      // Reservasi yang sudah 'completed' (tuntas) atau 'cancelled' (batal) tidak mengunci slot
+      if (b.status !== 'pending' && b.status !== 'confirmed') {
+        return false
+      }
+
+      // 4. Tanggal harus sama
+      const bInfo = parseBookingTime(b.starts_at)
+      if (bInfo.dateStr !== selectedDate) return false
+
+      // 5. Cek tumpang tindih waktu (overlap interval): slotStart < bEnd && slotEnd > bStart
+      const bService = allServices.find((s) => s.id === b.service_id)
+      const bDuration = bService?.time ?? 30
+      const bStart = bInfo.startMinutes
+      const bEnd = bStart + bDuration
+
+      return slotStart < bEnd && slotEnd > bStart
+    })
+  }
+
   const ticketBranch =
     branches.find((b) => b.id === activeBooking?.branch_id)?.name ||
     activeBooking?.branch_id ||
     ''
   const ticketBarber =
-    barbers.find((b) => b.id === activeBooking?.barber_id)?.name ||
+    allBarbers.find((b) => b.id === activeBooking?.barber_id)?.name ||
     'Kapster'
-  const ticketService =
-    services.find((s) => s.id === activeBooking?.service_id)?.name ||
-    'Layanan'
+  const ticketServiceObj = allServices.find(
+    (s) => s.id === activeBooking?.service_id
+  )
+  const ticketService = ticketServiceObj
+    ? `${ticketServiceObj.name} (Rp ${ticketServiceObj.price.toLocaleString('id-ID')})`
+    : 'Layanan'
   const ticketDate = activeBooking ? activeBooking.starts_at.slice(0, 10) : ''
   const ticketTime = activeBooking
     ? new Date(activeBooking.starts_at).toLocaleTimeString('id-ID', {
@@ -223,6 +374,23 @@ function CustomerHome() {
     setCustomerName('')
     setCustomerPhone('')
     setCustomerNote('')
+    // Bersihkan memori jika tiket sebelumnya sudah diulas atau selesai
+    try {
+      const savedId = localStorage.getItem('cahaya_customer_active_booking_id')
+      if (savedId) {
+        const found = mockDb.getBookings().find((b) => b.id === savedId)
+        if (
+          found &&
+          (found.has_reviewed ||
+            found.status === 'completed' ||
+            found.status === 'cancelled')
+        ) {
+          localStorage.removeItem('cahaya_customer_active_booking_id')
+        }
+      }
+    } catch {
+      // ignore
+    }
   }
 
   const viewSavedActiveTicket = () => {
@@ -230,8 +398,16 @@ function CustomerHome() {
       const savedId = localStorage.getItem('cahaya_customer_active_booking_id')
       if (!savedId) return
       const found = mockDb.getBookings().find((b) => b.id === savedId)
-      if (found && (found.status === 'pending' || found.status === 'confirmed')) {
+      // Hanya buka jika tiket masih aktif atau completed yang belum diulas
+      if (
+        found &&
+        (found.status === 'pending' ||
+          found.status === 'confirmed' ||
+          (found.status === 'completed' && !found.has_reviewed))
+      ) {
         setActiveBooking(found)
+      } else if (found && (found.has_reviewed || found.status === 'cancelled')) {
+        localStorage.removeItem('cahaya_customer_active_booking_id')
       }
     } catch {
       // ignore
@@ -243,12 +419,81 @@ function CustomerHome() {
     const savedId = localStorage.getItem('cahaya_customer_active_booking_id')
     if (savedId) {
       const found = mockDb.getBookings().find((b) => b.id === savedId)
-      if (found && (found.status === 'pending' || found.status === 'confirmed')) {
+      // Hanya tampilkan notice tiket aktif jika status pending, confirmed, atau completed BELUM diulas
+      if (
+        found &&
+        (found.status === 'pending' ||
+          found.status === 'confirmed' ||
+          (found.status === 'completed' && !found.has_reviewed))
+      ) {
         savedActiveBooking = found
+      } else if (found && (found.has_reviewed || found.status === 'cancelled')) {
+        localStorage.removeItem('cahaya_customer_active_booking_id')
       }
     }
   } catch {
     savedActiveBooking = null
+  }
+
+  const handleSearchTicket = (e: FormEvent) => {
+    e.preventDefault()
+    setTicketSearchError('')
+
+    const found = mockDb.findBookingByCodeOrPhone(ticketSearchQuery)
+    if (found) {
+      setActiveBooking(found)
+      // Hanya simpan ke memori aktif perangkat jika tiket masih butuh perhatian (pending, confirmed, atau belum diulas)
+      if (
+        found.status === 'pending' ||
+        found.status === 'confirmed' ||
+        (found.status === 'completed' && !found.has_reviewed)
+      ) {
+        localStorage.setItem('cahaya_customer_active_booking_id', found.id)
+      } else {
+        localStorage.removeItem('cahaya_customer_active_booking_id')
+      }
+      setTicketModalOpen(false)
+      setTicketSearchQuery('')
+
+      // Scroll ke bagian booking
+      setTimeout(() => {
+        const el = document.getElementById('booking')
+        if (el) el.scrollIntoView({ behavior: 'smooth' })
+      }, 100)
+    } else {
+      setTicketSearchError(
+        'Tiket tidak ditemukan. Pastikan Kode Booking (contoh: CB-MN-261115-99) atau Nomor WhatsApp sudah benar.'
+      )
+    }
+  }
+
+  const handleReviewSubmit = (e: FormEvent) => {
+    e.preventDefault()
+    if (!activeBooking) return
+
+    setReviewError('')
+    setSubmittingReview(true)
+    try {
+      const res = mockDb.submitBookingReview(
+        activeBooking.id,
+        reviewRating,
+        reviewComment
+      )
+      setActiveBooking(res.booking)
+      setCustomerReviews(mockDb.getReviews())
+      setReviewComment('')
+
+      // LANGSUNG BERSIHKAN MEMORI AKTIF:
+      // Ulasan telah terkirim dan tiket telah tuntas 100%.
+      // Saat refresh atau membuat booking baru, tiket lama tidak akan di-notice lagi.
+      localStorage.removeItem('cahaya_customer_active_booking_id')
+    } catch (err) {
+      setReviewError(
+        err instanceof Error ? err.message : 'Gagal mengirim ulasan.'
+      )
+    } finally {
+      setSubmittingReview(false)
+    }
   }
 
   const nextStep = () => {
@@ -273,7 +518,19 @@ function CustomerHome() {
       return
     }
 
-    // 1. Validasi Bentrok: Cek apakah No. HP atau Nama sedang ada booking aktif
+    // 1. Validasi Bentrok Jadwal Kapster (Slot Collision)
+    if (isSlotBooked(selectedTime)) {
+      alert(
+        `JADWAL TIDAK TERSEDIA!\n\n` +
+        `Mohon maaf, jadwal kapster ${currentBarber?.name || ''} pada ${selectedDate} pukul ${selectedTime} WIB baru saja dipesan oleh pelanggan lain atau bertabrakan dengan reservasi aktif.\n\n` +
+        `Silakan kembali ke Langkah 3 untuk memilih jam lain.`
+      )
+      setStep(3)
+      setSelectedTime('')
+      return
+    }
+
+    // 2. Validasi Bentrok: Cek apakah No. HP atau Nama sedang ada booking aktif
     const cleanPhone = customerPhone.replace(/\D/g, '')
     const allBookings = mockDb.getBookings()
     const conflictBooking = allBookings.find((b) => {
@@ -298,7 +555,7 @@ function CustomerHome() {
       return
     }
 
-    // 2. Simpan ke local mock repository
+    // 3. Simpan ke local mock repository
     const newBooking = mockDb.addCustomerBooking({
       customer_name: customerName.trim(),
       customer_phone: customerPhone.trim(),
@@ -311,6 +568,7 @@ function CustomerHome() {
 
     localStorage.setItem('cahaya_customer_active_booking_id', newBooking.id)
     setActiveBooking(newBooking)
+    setBookingsVersion((v) => v + 1)
   }
 
   return (
@@ -335,6 +593,7 @@ function CustomerHome() {
           <a href="#home" onClick={closeMenu}>Beranda</a>
           <a href="#branches" onClick={closeMenu}>Cabang</a>
           <a href="#services" onClick={closeMenu}>Layanan</a>
+          <a href="#reviews" onClick={closeMenu}>Ulasan</a>
           <a href="#contact" onClick={closeMenu}>Kontak</a>
 
           <a
@@ -396,9 +655,13 @@ function CustomerHome() {
               Booking Sekarang <span>→</span>
             </a>
 
-            <a href="#services" className="button button-outline">
-              Lihat Layanan
-            </a>
+            <button
+              type="button"
+              className="button button-outline"
+              onClick={() => setTicketModalOpen(true)}
+            >
+              🔍 Cek Tiket
+            </button>
           </motion.div>
 
           <motion.div className="hero-note" variants={fadeUp}>
@@ -556,9 +819,14 @@ function CustomerHome() {
               <span className="service-number">0{index + 1}</span>
               <h3>{service.name}</h3>
               <p>{service.description}</p>
-              <span className="service-time">
-                {service.time} menit
-              </span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' }}>
+                <span className="service-time">
+                  {service.time} menit
+                </span>
+                <strong style={{ color: 'var(--gold)', fontSize: '15px' }}>
+                  Rp {service.price.toLocaleString('id-ID')}
+                </strong>
+              </div>
             </motion.article>
           ))}
         </motion.div>
@@ -697,32 +965,64 @@ function CustomerHome() {
 
                       <h3 className="substep-title">Pilih Kapster</h3>
                       <p className="step-description">
-                        Pilih kapster yang kamu inginkan.
+                        {currentBranch
+                          ? `Pilih kapster yang bertugas di Cabang ${currentBranch.name}.`
+                          : 'Pilih cabang terlebih dahulu untuk melihat kapster yang bertugas.'}
                       </p>
 
-                      <div className="booking-option-grid">
-                        {barbers.map((barber) => (
-                          <button
-                            type="button"
-                            key={barber.id}
-                            disabled={!selectedBranch}
-                            className={`booking-option barber-option ${selectedBarber === barber.id ? 'selected' : ''
-                              }`}
-                            onClick={() => setSelectedBarber(barber.id)}
-                          >
-                            <span className="option-icon">♙</span>
-                            <strong>{barber.name}</strong>
-                            <small>
-                              {selectedBranch
-                                ? 'Kapster cabang terpilih'
-                                : 'Pilih cabang terlebih dahulu'}
-                            </small>
-                            {selectedBarber === barber.id && (
-                              <span className="option-check">✓</span>
-                            )}
-                          </button>
-                        ))}
-                      </div>
+                      {!selectedBranch ? (
+                        <div
+                          style={{
+                            padding: '16px',
+                            background: 'rgba(255, 255, 255, 0.03)',
+                            border: '1px dashed #443527',
+                            borderRadius: '8px',
+                            color: '#998a7b',
+                            fontSize: '13px',
+                            textAlign: 'center',
+                          }}
+                        >
+                          Pilih salah satu cabang di atas terlebih dahulu.
+                        </div>
+                      ) : availableBarbers.length === 0 ? (
+                        <div
+                          style={{
+                            padding: '16px',
+                            background: 'rgba(255, 255, 255, 0.03)',
+                            border: '1px dashed #443527',
+                            borderRadius: '8px',
+                            color: '#c69b64',
+                            fontSize: '13px',
+                            textAlign: 'center',
+                          }}
+                        >
+                          Saat ini belum ada kapster aktif yang bertugas di cabang ini.
+                        </div>
+                      ) : (
+                        <div className="booking-option-grid">
+                          {availableBarbers.map((barber) => (
+                            <button
+                              type="button"
+                              key={barber.id}
+                              className={`booking-option barber-option ${selectedBarber === barber.id ? 'selected' : ''
+                                }`}
+                              onClick={() => {
+                                setSelectedBarber(barber.id)
+                                setSelectedTime('')
+                              }}
+                            >
+                              <span className="option-icon">♙</span>
+                              <strong>{barber.name}</strong>
+                              <small>
+                                {barber.description || `Kapster Cabang ${currentBranch?.name}`}
+                              </small>
+                              {selectedBarber === barber.id && (
+                                <span className="option-check">✓</span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </>
                   )}
 
@@ -751,7 +1051,9 @@ function CustomerHome() {
                             <div>
                               <strong>{service.name}</strong>
                               <small>{service.description}</small>
-                              <span>{service.time} menit</span>
+                              <span style={{ color: 'var(--gold)', fontWeight: 600 }}>
+                                {service.time} menit · Rp {service.price.toLocaleString('id-ID')}
+                              </span>
                             </div>
 
                             <span className="service-radio">
@@ -794,26 +1096,38 @@ function CustomerHome() {
                       </label>
 
                       <div className="time-grid">
-                        {availableTimes.map((time) => (
-                          <button
-                            type="button"
-                            key={time}
-                            className={`time-option ${selectedTime === time ? 'selected' : ''
-                              }`}
-                            onClick={() => setSelectedTime(time)}
-                          >
-                            {time}
-                          </button>
-                        ))}
+                        {availableTimes.map((time) => {
+                          const booked = isSlotBooked(time)
+                          const isSelected = selectedTime === time
+                          return (
+                            <button
+                              type="button"
+                              key={time}
+                              disabled={booked}
+                              className={`time-option ${isSelected ? 'selected' : ''} ${booked ? 'booked' : ''}`}
+                              onClick={() => {
+                                if (!booked) setSelectedTime(time)
+                              }}
+                              title={
+                                booked
+                                  ? `Jadwal pukul ${time} WIB sudah terisi`
+                                  : `Pilih pukul ${time} WIB`
+                              }
+                            >
+                              <span className="time-text">{time}</span>
+                              {booked && <span className="time-status-badge">Penuh</span>}
+                            </button>
+                          )
+                        })}
                       </div>
 
                       <div className="booking-notice">
                         <span>ⓘ</span>
                         <p>
-                          Jam operasional 10.00–21.00 WIB.
-                          Pilihan waktu di atas masih berupa contoh.
-                          Ketersediaan sebenarnya akan mengikuti jadwal
-                          kapster yang dikelola admin.
+                          Jam operasional 10.00–21.00 WIB. Slot bertanda{' '}
+                          <strong style={{ color: '#e07a5f' }}>Penuh</strong> telah
+                          direservasi oleh pelanggan lain. Durasi layanan{' '}
+                          <strong>{currentService?.time ?? 30} menit</strong>.
                         </p>
                       </div>
                     </>
@@ -873,7 +1187,7 @@ function CustomerHome() {
 
                         <div><span>Cabang</span><strong>{currentBranch?.name}</strong></div>
                         <div><span>Kapster</span><strong>{currentBarber?.name}</strong></div>
-                        <div><span>Layanan</span><strong>{currentService?.name}</strong></div>
+                        <div><span>Layanan</span><strong>{currentService ? `${currentService.name} (Rp ${currentService.price.toLocaleString('id-ID')})` : '-'}</strong></div>
                         <div><span>Tanggal</span><strong>{selectedDate}</strong></div>
                         <div><span>Waktu</span><strong>{selectedTime} WIB</strong></div>
                         <div><span>Durasi</span><strong>{currentService?.time} menit</strong></div>
@@ -906,7 +1220,8 @@ function CustomerHome() {
                     disabled={
                       (step === 1 && (!selectedBranch || !selectedBarber)) ||
                       (step === 2 && !selectedService) ||
-                      (step === 3 && (!selectedDate || !selectedTime))
+                      (step === 3 &&
+                        (!selectedDate || !selectedTime || isSlotBooked(selectedTime)))
                     }
                     onClick={nextStep}
                   >
@@ -944,11 +1259,21 @@ function CustomerHome() {
                     fontWeight: 700,
                     letterSpacing: '1px',
                     textTransform: 'uppercase',
-                    background: activeBooking.status === 'confirmed' ? '#2e7d32' : '#c9a66b',
+                    background:
+                      activeBooking.status === 'completed'
+                        ? '#2e7d32'
+                        : activeBooking.status === 'confirmed'
+                        ? '#2e7d32'
+                        : '#c9a66b',
                     color: '#fff',
                   }}
                 >
-                  Status: {activeBooking.status === 'confirmed' ? 'Terkonfirmasi (Siap Datang)' : 'Menunggu Konfirmasi Admin'}
+                  Status:{' '}
+                  {activeBooking.status === 'completed'
+                    ? 'Layanan Selesai ✓'
+                    : activeBooking.status === 'confirmed'
+                    ? 'Terkonfirmasi (Siap Datang)'
+                    : 'Menunggu Konfirmasi Admin'}
                 </span>
               </div>
 
@@ -969,37 +1294,204 @@ function CustomerHome() {
                 )}
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '20px' }}>
-                <a
-                  href={`https://api.whatsapp.com/send?phone=6281234567890&text=${encodeURIComponent(
-                    `Halo Cahaya Barber Cabang ${ticketBranch}, saya ingin mengonfirmasi booking saya:\n\n` +
-                    `• Kode Booking: ${activeBooking.booking_code}\n` +
-                    `• Nama: ${activeBooking.customer_name}\n` +
-                    `• Layanan: ${ticketService}\n` +
-                    `• Kapster: ${ticketBarber}\n` +
-                    `• Jadwal: ${ticketDate} jam ${ticketTime} WIB\n\n` +
-                    `Terima kasih.`
-                  )}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="button"
-                  style={{ textAlign: 'center', background: '#25D366', color: '#fff', borderColor: '#25D366' }}
+              {/* REVIEW SECTION WHEN COMPLETED */}
+              {activeBooking.status === 'completed' && (
+                <div
+                  style={{
+                    marginTop: '24px',
+                    padding: '24px 20px',
+                    background: 'rgba(28, 21, 16, 0.85)',
+                    border: '1px solid #57402b',
+                    borderRadius: '8px',
+                    textAlign: 'center',
+                  }}
                 >
-                  💬 Konfirmasi Booking ke WhatsApp
-                </a>
+                  {!activeBooking.has_reviewed ? (
+                    <form onSubmit={handleReviewSubmit}>
+                      <span className="eyebrow" style={{ color: 'var(--gold-light)' }}>
+                        FEEDBACK LAYANAN
+                      </span>
+                      <h4
+                        style={{
+                          margin: '8px 0 6px',
+                          fontSize: '18px',
+                          color: '#f5eee5',
+                        }}
+                      >
+                        Bagaimana Pengalaman Cukurmu?
+                      </h4>
+                      <p
+                        style={{
+                          color: '#b7a797',
+                          fontSize: '13px',
+                          marginBottom: '16px',
+                        }}
+                      >
+                        Beri rating dan ulasan untuk Mas <strong>{ticketBarber}</strong> di Cabang{' '}
+                        <strong>{ticketBranch}</strong>.
+                      </p>
 
-                <a
-                  href={`https://api.whatsapp.com/send?phone=6281234567890&text=${encodeURIComponent(
-                    `Halo Cahaya Barber Cabang ${ticketBranch}, saya ${activeBooking.customer_name} pemegang Kode Booking ${activeBooking.booking_code} untuk jadwal ${ticketDate} jam ${ticketTime} WIB.\n\n` +
-                    `Mohon izin mengajukan pembatalan reservasi ini karena ada keperluan mendadak. Terima kasih.`
-                  )}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="button button-outline"
-                  style={{ textAlign: 'center', borderColor: '#666', color: '#bbb', fontSize: '13px' }}
-                >
-                  ✕ Ingin Batalkan? Hubungi WhatsApp Admin
-                </a>
+                      <StarRatingInput
+                        value={reviewRating}
+                        onChange={setReviewRating}
+                      />
+
+                      <div style={{ textAlign: 'left', marginTop: '10px' }}>
+                        <label
+                          style={{
+                            color: '#b7a797',
+                            fontSize: '11px',
+                            display: 'block',
+                            marginBottom: '6px',
+                          }}
+                        >
+                          Pesan atau Masukan (Opsional):
+                        </label>
+                        <textarea
+                          rows={3}
+                          placeholder="Tuliskan pengalaman atau pesan tambahan di sini (opsional)..."
+                          value={reviewComment}
+                          onChange={(e) => setReviewComment(e.target.value)}
+                          style={{
+                            width: '100%',
+                            padding: '12px 14px',
+                            background: '#100d0b',
+                            border: '1px solid #57402b',
+                            borderRadius: '6px',
+                            color: '#f5eee5',
+                            fontSize: '13px',
+                            fontFamily: 'inherit',
+                            resize: 'vertical',
+                            outline: 'none',
+                            boxSizing: 'border-box',
+                          }}
+                        />
+                      </div>
+
+                      {reviewError && (
+                        <div
+                          style={{
+                            color: '#ef4444',
+                            fontSize: '12px',
+                            marginTop: '8px',
+                          }}
+                        >
+                          {reviewError}
+                        </div>
+                      )}
+
+                      <button
+                        type="submit"
+                        className="booking-next"
+                        style={{ width: '100%', marginTop: '16px' }}
+                        disabled={submittingReview}
+                      >
+                        {submittingReview
+                          ? 'Mengirim Ulasan...'
+                          : 'Kirim Ulasan ★'}
+                      </button>
+                    </form>
+                  ) : (
+                    <div>
+                      <div
+                        style={{
+                          fontSize: '28px',
+                          color: '#25D366',
+                          marginBottom: '8px',
+                        }}
+                      >
+                        ✓
+                      </div>
+                      <h4
+                        style={{
+                          margin: '0 0 6px',
+                          color: '#f5eee5',
+                          fontSize: '18px',
+                        }}
+                      >
+                        Ulasan Anda Telah Terkirim
+                      </h4>
+                      <div
+                        style={{
+                          color: '#fbbf24',
+                          fontSize: '22px',
+                          margin: '8px 0',
+                          letterSpacing: '3px',
+                        }}
+                      >
+                        {'★'.repeat(activeBooking.review_rating || 5)}
+                      </div>
+                      {activeBooking.review_comment ? (
+                        <p
+                          style={{
+                            fontStyle: 'italic',
+                            color: '#b7a797',
+                            fontSize: '13px',
+                          }}
+                        >
+                          "{activeBooking.review_comment}"
+                        </p>
+                      ) : (
+                        <p
+                          style={{
+                            fontStyle: 'italic',
+                            color: '#8f7d6b',
+                            fontSize: '12px',
+                          }}
+                        >
+                          (Rating bintang tanpa ulasan tertulis)
+                        </p>
+                      )}
+                      <p
+                        style={{
+                          color: '#888',
+                          fontSize: '12px',
+                          marginTop: '12px',
+                        }}
+                      >
+                        Terima kasih! Feedback Anda sangat membantu kami untuk
+                        terus menjaga standar kualitas pelayanan.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '20px' }}>
+                {activeBooking.status !== 'completed' && (
+                  <>
+                    <a
+                      href={`https://api.whatsapp.com/send?phone=6281234567890&text=${encodeURIComponent(
+                        `Halo Cahaya Barber Cabang ${ticketBranch}, saya ingin mengonfirmasi booking saya:\n\n` +
+                          `• Kode Booking: ${activeBooking.booking_code}\n` +
+                          `• Nama: ${activeBooking.customer_name}\n` +
+                          `• Layanan: ${ticketService}\n` +
+                          `• Kapster: ${ticketBarber}\n` +
+                          `• Jadwal: ${ticketDate} jam ${ticketTime} WIB\n\n` +
+                          `Terima kasih.`
+                      )}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="button"
+                      style={{ textAlign: 'center', background: '#25D366', color: '#fff', borderColor: '#25D366' }}
+                    >
+                      💬 Konfirmasi Booking ke WhatsApp
+                    </a>
+
+                    <a
+                      href={`https://api.whatsapp.com/send?phone=6281234567890&text=${encodeURIComponent(
+                        `Halo Cahaya Barber Cabang ${ticketBranch}, saya ${activeBooking.customer_name} pemegang Kode Booking ${activeBooking.booking_code} untuk jadwal ${ticketDate} jam ${ticketTime} WIB.\n\n` +
+                          `Mohon izin mengajukan pembatalan reservasi ini karena ada keperluan mendadak. Terima kasih.`
+                      )}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="button button-outline"
+                      style={{ textAlign: 'center', borderColor: '#666', color: '#bbb', fontSize: '13px' }}
+                    >
+                      ✕ Ingin Batalkan? Hubungi WhatsApp Admin
+                    </a>
+                  </>
+                )}
 
                 <button
                   type="button"
@@ -1012,6 +1504,92 @@ function CustomerHome() {
             </motion.div>
           )}
         </div>
+      </section>
+
+      {/* ======================================
+          REVIEWS / TESTIMONIALS SECTION
+      ====================================== */}
+      <section className="section" id="reviews" style={{ padding: '80px 20px', background: '#120f0d' }}>
+        <motion.div
+          className="section-heading"
+          variants={stagger}
+          initial="hidden"
+          whileInView="visible"
+          viewport={viewportSettings}
+        >
+          <motion.span className="eyebrow" variants={fadeUp}>
+            CUSTOMER STORIES
+          </motion.span>
+          <motion.h2 variants={fadeUp}>
+            Apa Kata Pelanggan?
+          </motion.h2>
+          <motion.p variants={fadeUp}>
+            Pengalaman dan ulasan kepuasan asli dari pelanggan setia Cahaya Barber.
+          </motion.p>
+        </motion.div>
+
+        <motion.div
+          variants={stagger}
+          initial="hidden"
+          whileInView="visible"
+          viewport={viewportSettings}
+          style={{
+            maxWidth: '1200px',
+            margin: '0 auto',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+            gap: '20px',
+          }}
+        >
+          {customerReviews.slice(0, 4).map((r) => (
+            <motion.div
+              key={r.id}
+              variants={fadeUp}
+              style={{
+                background: '#1c1510',
+                border: '1px solid #493523',
+                borderRadius: '8px',
+                padding: '24px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+              }}
+            >
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <div style={{ color: 'var(--gold)', fontSize: '16px', letterSpacing: '2px' }}>
+                    {'★'.repeat(r.rating)}
+                  </div>
+                  <span
+                    style={{
+                      fontSize: '10px',
+                      padding: '2px 8px',
+                      borderRadius: '10px',
+                      background: 'rgba(198, 155, 100, 0.15)',
+                      color: 'var(--gold-light)',
+                      border: '1px solid rgba(198, 155, 100, 0.3)',
+                    }}
+                  >
+                    Cabang {r.branch_id.toUpperCase()}
+                  </span>
+                </div>
+                <p style={{ color: '#d1c4b7', fontSize: '13px', lineHeight: 1.7, fontStyle: 'italic', marginBottom: '16px' }}>
+                  "{r.comment || 'Pelanggan memberikan rating bintang tanpa ulasan tertulis.'}"
+                </p>
+              </div>
+
+              <div style={{ borderTop: '1px solid #382718', paddingTop: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <strong style={{ color: '#f5eee5', fontSize: '13px', display: 'block' }}>{r.customer_name}</strong>
+                  <small style={{ color: '#8f7d6b', fontSize: '11px' }}>Bersama {r.barber_name}</small>
+                </div>
+                <span style={{ color: '#25D366', fontSize: '10px', fontWeight: 700 }}>
+                  ✓ Verified
+                </span>
+              </div>
+            </motion.div>
+          ))}
+        </motion.div>
       </section>
 
       {/* ======================================
@@ -1029,6 +1607,140 @@ function CustomerHome() {
           Mulai Booking →
         </a>
       </section>
+
+      {/* ======================================
+          MODAL CARI & BUKA TIKET
+      ====================================== */}
+      {ticketModalOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.8)',
+            backdropFilter: 'blur(4px)',
+            display: 'grid',
+            placeItems: 'center',
+            zIndex: 9999,
+            padding: '20px',
+          }}
+          onClick={() => setTicketModalOpen(false)}
+        >
+          <div
+            style={{
+              background: '#1c1510',
+              border: '1px solid #57402b',
+              borderRadius: '10px',
+              width: '100%',
+              maxWidth: '460px',
+              padding: '28px',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.6)',
+              position: 'relative',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'flex-start',
+                marginBottom: '14px',
+              }}
+            >
+              <div>
+                <span className="eyebrow" style={{ fontSize: '10px' }}>
+                  PORTAL PELANGGAN
+                </span>
+                <h3 style={{ margin: '4px 0 0', fontSize: '20px', color: '#f5eee5' }}>
+                  Cek & Buka Tiket
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTicketModalOpen(false)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#999',
+                  fontSize: '26px',
+                  cursor: 'pointer',
+                  lineHeight: 1,
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            <p
+              style={{
+                color: '#b7a797',
+                fontSize: '13px',
+                lineHeight: 1.6,
+                marginBottom: '20px',
+              }}
+            >
+              Masukkan <strong>Kode Booking</strong> Anda (contoh:{' '}
+              <code style={{ color: 'var(--gold-light)' }}>CB-MN-261115-99</code>) atau{' '}
+              <strong>Nomor WhatsApp</strong> yang digunakan saat reservasi.
+            </p>
+
+            <form onSubmit={handleSearchTicket}>
+              <input
+                type="text"
+                placeholder="Contoh: CB-MN-261115-99 atau 081234567000"
+                value={ticketSearchQuery}
+                onChange={(e) => {
+                  setTicketSearchQuery(e.target.value)
+                  setTicketSearchError('')
+                }}
+                required
+                autoFocus
+                style={{
+                  width: '100%',
+                  padding: '13px 16px',
+                  background: '#100d0b',
+                  border: '1px solid #57402b',
+                  borderRadius: '6px',
+                  color: '#f5eee5',
+                  fontSize: '14px',
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                }}
+              />
+
+              {ticketSearchError && (
+                <div
+                  style={{
+                    color: '#ef4444',
+                    fontSize: '12px',
+                    marginTop: '10px',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {ticketSearchError}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: '10px', marginTop: '22px' }}>
+                <button
+                  type="button"
+                  className="button button-outline"
+                  onClick={() => setTicketModalOpen(false)}
+                  style={{ flex: 1 }}
+                >
+                  Tutup
+                </button>
+                <button
+                  type="submit"
+                  className="button"
+                  style={{ flex: 2 }}
+                >
+                  Buka Tiket →
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ======================================
           FOOTER
