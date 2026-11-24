@@ -23,6 +23,7 @@ export type MockBranch = {
 export type MockBarber = {
   id: string
   name: string
+  branch_id: string
   phone: string | null
   photo_url: string | null
   description: string | null
@@ -51,6 +52,24 @@ export type MockBooking = {
   starts_at: string
   status: 'pending' | 'confirmed' | 'completed' | 'cancelled'
   created_at: string
+  has_reviewed?: boolean
+  review_rating?: number
+  review_comment?: string | null
+  reviewed_at?: string
+}
+
+export interface MockReview {
+  id: string
+  booking_id?: string
+  booking_code?: string
+  customer_name: string
+  branch_id: string
+  barber_id: string
+  barber_name: string
+  service_name: string
+  rating: number
+  comment?: string
+  created_at: string
 }
 
 export type MockService = {
@@ -60,6 +79,8 @@ export type MockService = {
   time: number
   price: number
   is_active: boolean
+  is_archived: boolean
+  archived_at: string | null
 }
 
 // ==========================================
@@ -141,6 +162,8 @@ const INITIAL_SERVICES: MockService[] = [
     time: 30,
     price: 40000,
     is_active: true,
+    is_archived: false,
+    archived_at: null,
   },
   {
     id: 'coloring',
@@ -149,6 +172,8 @@ const INITIAL_SERVICES: MockService[] = [
     time: 45,
     price: 120000,
     is_active: true,
+    is_archived: false,
+    archived_at: null,
   },
   {
     id: 'perm',
@@ -157,6 +182,8 @@ const INITIAL_SERVICES: MockService[] = [
     time: 45,
     price: 150000,
     is_active: true,
+    is_archived: false,
+    archived_at: null,
   },
   {
     id: 'down-perm',
@@ -165,6 +192,8 @@ const INITIAL_SERVICES: MockService[] = [
     time: 45,
     price: 90000,
     is_active: true,
+    is_archived: false,
+    archived_at: null,
   },
   {
     id: 'massage',
@@ -173,6 +202,18 @@ const INITIAL_SERVICES: MockService[] = [
     time: 30,
     price: 35000,
     is_active: true,
+    is_archived: false,
+    archived_at: null,
+  },
+  {
+    id: 'hair-spa',
+    name: 'Traditional Hair Spa',
+    description: 'Perawatan relaksasi kulit kepala dan creambath herbal tradisional (Menu Musiman Diarsipkan).',
+    time: 40,
+    price: 65000,
+    is_active: false,
+    is_archived: true,
+    archived_at: new Date(Date.now() - 7 * 86400000).toISOString(),
   },
 ]
 
@@ -180,6 +221,7 @@ const INITIAL_BARBERS: MockBarber[] = [
   {
     id: 'barber-1',
     name: 'Ahmad Fauzi',
+    branch_id: 'manislor',
     phone: '081234567891',
     photo_url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
     description: 'Senior Barber (Pengalaman 7 tahun, Fade & Pompadour specialist)',
@@ -191,6 +233,7 @@ const INITIAL_BARBERS: MockBarber[] = [
   {
     id: 'barber-2',
     name: 'Rio Ferdinand',
+    branch_id: 'manislor',
     phone: '082198765432',
     photo_url: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80',
     description: 'Spesialis Korean Perm, Two-Block, dan Textured Crop',
@@ -202,6 +245,7 @@ const INITIAL_BARBERS: MockBarber[] = [
   {
     id: 'barber-3',
     name: 'Dimas Setiawan',
+    branch_id: 'jalaksana',
     phone: '085712344321',
     photo_url: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=150&auto=format&fit=crop&q=80',
     description: 'Master Groomer, Ahli Hair Tattoo, Razor Shave & Beard Trim',
@@ -213,6 +257,7 @@ const INITIAL_BARBERS: MockBarber[] = [
   {
     id: 'barber-4',
     name: 'Gilang Ramadhan',
+    branch_id: 'veteran',
     phone: '087855667788',
     photo_url: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=150&auto=format&fit=crop&q=80',
     description: 'Colorist & Styling Specialist, Ahli Bleaching & Fashion Color',
@@ -224,6 +269,7 @@ const INITIAL_BARBERS: MockBarber[] = [
   {
     id: 'barber-5',
     name: 'Erik Susanto',
+    branch_id: 'veteran',
     phone: '081399887766',
     photo_url: null,
     description: 'Mantan kapster - Arsip mutasi cabang luar kota',
@@ -318,8 +364,77 @@ function generateInitialBookings(): MockBooking[] {
       status: 'confirmed',
       created_at: todayStr(11, 45),
     },
+    {
+      id: 'book-sample-completed',
+      booking_code: 'CB-MN-261115-99',
+      customer_name: 'Galih Ramadhani',
+      customer_phone: '081234567000',
+      customer_note: 'Layanan baru saja selesai. Siap mengisi rating & ulasan.',
+      branch_id: 'manislor',
+      barber_id: 'barber-1',
+      service_id: 'haircut',
+      starts_at: todayStr(11, 0),
+      status: 'completed',
+      created_at: todayStr(10, 0),
+      has_reviewed: false,
+    },
   ]
 }
+
+const INITIAL_REVIEWS: MockReview[] = [
+  {
+    id: 'rev-1',
+    booking_id: 'book-completed-1',
+    booking_code: 'CB-MN-261114-01',
+    customer_name: 'Dimas Anggara',
+    branch_id: 'manislor',
+    barber_id: 'barber-1',
+    barber_name: 'Ahmad Fauzi',
+    service_name: 'Classic Haircut',
+    rating: 5,
+    comment: 'Potongan rambut Mas Ahmad rapi banget dan detail! Tempatnya nyaman dan wangi.',
+    created_at: new Date(Date.now() - 1 * 86400000).toISOString(),
+  },
+  {
+    id: 'rev-2',
+    booking_id: 'book-completed-2',
+    booking_code: 'CB-JL-261113-01',
+    customer_name: 'Rifki Pratama',
+    branch_id: 'jalaksana',
+    barber_id: 'barber-3',
+    barber_name: 'Dimas Setiawan',
+    service_name: 'Textured Perm',
+    rating: 5,
+    comment: 'Korean Perm-nya juara, tahan lama dan ga bikin rambut rusak.',
+    created_at: new Date(Date.now() - 2 * 86400000).toISOString(),
+  },
+  {
+    id: 'rev-3',
+    booking_id: 'book-completed-3',
+    booking_code: 'CB-VT-261112-01',
+    customer_name: 'Bagus Setiawan',
+    branch_id: 'veteran',
+    barber_id: 'barber-4',
+    barber_name: 'Gilang Ramadhan',
+    service_name: 'Hair Coloring',
+    rating: 5,
+    comment: 'Pelayanan ramah, booking lewat web ga pake ngantri lama.',
+    created_at: new Date(Date.now() - 4 * 86400000).toISOString(),
+  },
+  {
+    id: 'rev-4',
+    booking_id: 'book-completed-4',
+    booking_code: 'CB-MN-261110-01',
+    customer_name: 'Aditya Nugraha',
+    branch_id: 'manislor',
+    barber_id: 'barber-2',
+    barber_name: 'Rio Ferdinand',
+    service_name: 'Classic Haircut',
+    rating: 4,
+    comment: 'Styling pomadenya mantap, kapster paham gaya rambut yang cocok dengan bentuk muka.',
+    created_at: new Date(Date.now() - 5 * 86400000).toISOString(),
+  },
+]
 
 // ==========================================
 // LOCAL STORAGE STORE MANAGEMENT
@@ -328,6 +443,8 @@ function generateInitialBookings(): MockBooking[] {
 const STORAGE_KEY_BARBERS = 'cahaya_mock_barbers'
 const STORAGE_KEY_ASSIGNMENTS = 'cahaya_mock_assignments'
 const STORAGE_KEY_BOOKINGS = 'cahaya_mock_bookings'
+const STORAGE_KEY_SERVICES = 'cahaya_mock_services'
+const STORAGE_KEY_REVIEWS = 'cahaya_mock_reviews'
 const STORAGE_KEY_SESSION = 'cahaya_mock_session'
 
 function getFromStorage<T>(key: string, defaultValue: T): T {
@@ -343,6 +460,9 @@ function getFromStorage<T>(key: string, defaultValue: T): T {
 function setToStorage<T>(key: string, value: T): void {
   try {
     localStorage.setItem(key, JSON.stringify(value))
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('cahaya-storage-sync'))
+    }
   } catch (err) {
     console.error('Failed to save to localStorage:', err)
   }
@@ -350,14 +470,89 @@ function setToStorage<T>(key: string, value: T): void {
 
 // Inisialisasi awal jika belum ada
 export function initializeMockStore(): void {
-  if (!localStorage.getItem(STORAGE_KEY_BARBERS)) {
+  const existingBarbersRaw = localStorage.getItem(STORAGE_KEY_BARBERS)
+  if (!existingBarbersRaw) {
     setToStorage(STORAGE_KEY_BARBERS, INITIAL_BARBERS)
+  } else {
+    // Migration: pastikan setiap data kapster di localStorage memiliki branch_id
+    try {
+      const parsed = JSON.parse(existingBarbersRaw) as MockBarber[]
+      let needsUpdate = false
+      const updated = parsed.map((b) => {
+        if (!b.branch_id) {
+          needsUpdate = true
+          const matchedInitial = INITIAL_BARBERS.find((ib) => ib.id === b.id)
+          return { ...b, branch_id: matchedInitial?.branch_id || 'manislor' }
+        }
+        return b
+      })
+      if (needsUpdate) {
+        setToStorage(STORAGE_KEY_BARBERS, updated)
+      }
+    } catch {
+      setToStorage(STORAGE_KEY_BARBERS, INITIAL_BARBERS)
+    }
   }
+
   if (!localStorage.getItem(STORAGE_KEY_ASSIGNMENTS)) {
     setToStorage(STORAGE_KEY_ASSIGNMENTS, INITIAL_ASSIGNMENTS)
   }
-  if (!localStorage.getItem(STORAGE_KEY_BOOKINGS)) {
+  const existingBookingsRaw = localStorage.getItem(STORAGE_KEY_BOOKINGS)
+  if (!existingBookingsRaw) {
     setToStorage(STORAGE_KEY_BOOKINGS, generateInitialBookings())
+  } else {
+    try {
+      const parsed = JSON.parse(existingBookingsRaw) as MockBooking[]
+      if (!parsed.some((b) => b.id === 'book-sample-completed')) {
+        const sample = generateInitialBookings().find(
+          (b) => b.id === 'book-sample-completed'
+        )
+        if (sample) {
+          setToStorage(STORAGE_KEY_BOOKINGS, [sample, ...parsed])
+        }
+      }
+    } catch {
+      setToStorage(STORAGE_KEY_BOOKINGS, generateInitialBookings())
+    }
+  }
+  const existingServicesRaw = localStorage.getItem(STORAGE_KEY_SERVICES)
+  if (!existingServicesRaw) {
+    setToStorage(STORAGE_KEY_SERVICES, INITIAL_SERVICES)
+  } else {
+    try {
+      const parsed = JSON.parse(existingServicesRaw) as MockService[]
+      let needsUpdate = false
+      const updated = parsed.map((s) => {
+        if (s.is_archived === undefined) {
+          needsUpdate = true
+          return {
+            ...s,
+            is_archived: false,
+            archived_at: null,
+          }
+        }
+        return s
+      })
+
+      // Jika belum ada sample arsip hair-spa, tambahkan agar ada contoh visual
+      if (!updated.some((s) => s.id === 'hair-spa')) {
+        const hairSpa = INITIAL_SERVICES.find((s) => s.id === 'hair-spa')
+        if (hairSpa) {
+          updated.push(hairSpa)
+          needsUpdate = true
+        }
+      }
+
+      if (needsUpdate) {
+        setToStorage(STORAGE_KEY_SERVICES, updated)
+      }
+    } catch {
+      setToStorage(STORAGE_KEY_SERVICES, INITIAL_SERVICES)
+    }
+  }
+
+  if (!localStorage.getItem(STORAGE_KEY_REVIEWS)) {
+    setToStorage(STORAGE_KEY_REVIEWS, INITIAL_REVIEWS)
   }
 }
 
@@ -376,7 +571,101 @@ export const mockDb = {
 
   // SERVICES
   getServices(): MockService[] {
-    return INITIAL_SERVICES
+    return getFromStorage<MockService[]>(
+      STORAGE_KEY_SERVICES,
+      INITIAL_SERVICES
+    )
+  },
+
+  addService(payload: {
+    name: string
+    description: string
+    time: number
+    price: number
+  }): MockService {
+    const services = this.getServices()
+    const newService: MockService = {
+      id: `service-${Date.now()}`,
+      name: payload.name.trim(),
+      description: payload.description.trim(),
+      time: Math.max(15, Number(payload.time) || 30),
+      price: Math.max(0, Number(payload.price) || 0),
+      is_active: true,
+      is_archived: false,
+      archived_at: null,
+    }
+
+    const updated = [...services, newService]
+    setToStorage(STORAGE_KEY_SERVICES, updated)
+    return newService
+  },
+
+  updateService(
+    id: string,
+    payload: {
+      name: string
+      description: string
+      time: number
+      price: number
+    }
+  ): void {
+    const services = this.getServices().map((s) => {
+      if (s.id !== id) return s
+      return {
+        ...s,
+        name: payload.name.trim(),
+        description: payload.description.trim(),
+        time: Math.max(15, Number(payload.time) || 30),
+        price: Math.max(0, Number(payload.price) || 0),
+      }
+    })
+    setToStorage(STORAGE_KEY_SERVICES, services)
+  },
+
+  toggleServiceStatus(id: string): boolean {
+    let nextStatus = false
+    const services = this.getServices().map((s) => {
+      if (s.id !== id) return s
+      nextStatus = !s.is_active
+      return { ...s, is_active: nextStatus }
+    })
+    setToStorage(STORAGE_KEY_SERVICES, services)
+    return nextStatus
+  },
+
+  archiveService(id: string): void {
+    const services = this.getServices().map((s) => {
+      if (s.id !== id) return s
+      return {
+        ...s,
+        is_active: false,
+        is_archived: true,
+        archived_at: new Date().toISOString(),
+      }
+    })
+    setToStorage(STORAGE_KEY_SERVICES, services)
+  },
+
+  restoreService(id: string): void {
+    const services = this.getServices().map((s) => {
+      if (s.id !== id) return s
+      return {
+        ...s,
+        is_active: true,
+        is_archived: false,
+        archived_at: null,
+      }
+    })
+    setToStorage(STORAGE_KEY_SERVICES, services)
+  },
+
+  deleteService(id: string): void {
+    const services = this.getServices().filter((s) => s.id !== id)
+    setToStorage(STORAGE_KEY_SERVICES, services)
+  },
+
+  deleteServicePermanently(id: string): void {
+    this.deleteService(id)
   },
 
   // BARBERS
@@ -395,6 +684,7 @@ export const mockDb = {
     const newBarber: MockBarber = {
       id: `barber-${Date.now()}`,
       name: payload.name.trim(),
+      branch_id: payload.branch_id,
       phone: payload.phone?.trim() || null,
       photo_url: payload.photo_url?.trim() || null,
       description: payload.description?.trim() || null,
@@ -407,7 +697,7 @@ export const mockDb = {
     const updatedBarbers = [...barbers, newBarber]
     setToStorage(STORAGE_KEY_BARBERS, updatedBarbers)
 
-    // Tambah penempatan cabang awal
+    // Tambah penempatan cabang untuk kompatibilitas
     this.addAssignment(newBarber.id, payload.branch_id)
 
     return newBarber
@@ -417,6 +707,7 @@ export const mockDb = {
     id: string,
     payload: {
       name: string
+      branch_id?: string
       phone?: string | null
       photo_url?: string | null
       description?: string | null
@@ -427,6 +718,7 @@ export const mockDb = {
       return {
         ...b,
         name: payload.name.trim(),
+        branch_id: payload.branch_id || b.branch_id,
         phone: payload.phone?.trim() || null,
         photo_url: payload.photo_url?.trim() || null,
         description: payload.description?.trim() || null,
@@ -608,18 +900,12 @@ export const mockDb = {
   getDashboardStats(branchId?: string | null) {
     const bookings = this.getBookings(branchId)
     const barbers = this.getBarbers()
-    const assignments = this.getAssignments()
     const services = this.getServices()
 
     let activeBarbersCount: number
     if (branchId) {
-      const activeBarberIds = new Set(
-        assignments
-          .filter((a) => a.branch_id === branchId && a.is_active)
-          .map((a) => a.barber_id)
-      )
       activeBarbersCount = barbers.filter(
-        (b) => activeBarberIds.has(b.id) && b.is_active && !b.is_archived
+        (b) => b.branch_id === branchId && b.is_active && !b.is_archived
       ).length
     } else {
       activeBarbersCount = barbers.filter(
@@ -636,6 +922,119 @@ export const mockDb = {
       serviceCount: services.filter((s) => s.is_active).length,
       recentBookings: bookings.slice(0, 5),
     }
+  },
+
+  // REVIEWS
+  getReviews(branchId?: string | null): MockReview[] {
+    const all = getFromStorage<MockReview[]>(
+      STORAGE_KEY_REVIEWS,
+      INITIAL_REVIEWS
+    )
+    if (!branchId) return all
+    return all.filter((r) => r.branch_id === branchId)
+  },
+
+  addReview(payload: {
+    booking_id?: string
+    booking_code?: string
+    customer_name: string
+    branch_id: string
+    barber_id: string
+    barber_name: string
+    service_name: string
+    rating: number
+    comment?: string
+  }): MockReview {
+    const reviews = this.getReviews()
+    const newReview: MockReview = {
+      id: `rev-${Date.now()}`,
+      booking_id: payload.booking_id,
+      booking_code: payload.booking_code,
+      customer_name: payload.customer_name.trim(),
+      branch_id: payload.branch_id,
+      barber_id: payload.barber_id,
+      barber_name: payload.barber_name,
+      service_name: payload.service_name,
+      rating: Math.min(5, Math.max(1, Math.round(payload.rating))),
+      comment: payload.comment?.trim() || '',
+      created_at: new Date().toISOString(),
+    }
+    const updated = [newReview, ...reviews]
+    setToStorage(STORAGE_KEY_REVIEWS, updated)
+    return newReview
+  },
+
+  submitBookingReview(
+    bookingId: string,
+    rating: number,
+    comment?: string
+  ): { review: MockReview; booking: MockBooking } {
+    const bookings = this.getBookings()
+    const targetBooking = bookings.find((b) => b.id === bookingId)
+    if (!targetBooking) {
+      throw new Error('Data reservasi tidak ditemukan.')
+    }
+
+    const barbers = this.getBarbers()
+    const services = this.getServices()
+    const barber = barbers.find((b) => b.id === targetBooking.barber_id)
+    const service = services.find((s) => s.id === targetBooking.service_id)
+
+    const cleanComment = comment?.trim() || ''
+
+    const newReview = this.addReview({
+      booking_id: targetBooking.id,
+      booking_code: targetBooking.booking_code,
+      customer_name: targetBooking.customer_name,
+      branch_id: targetBooking.branch_id,
+      barber_id: targetBooking.barber_id,
+      barber_name: barber ? barber.name : 'Senior Barber',
+      service_name: service ? service.name : 'Layanan Grooming',
+      rating,
+      comment: cleanComment,
+    })
+
+    const updatedBooking: MockBooking = {
+      ...targetBooking,
+      has_reviewed: true,
+      review_rating: rating,
+      review_comment: cleanComment || null,
+      reviewed_at: newReview.created_at,
+    }
+
+    const updatedBookings = bookings.map((b) =>
+      b.id === bookingId ? updatedBooking : b
+    )
+    setToStorage(STORAGE_KEY_BOOKINGS, updatedBookings)
+
+    return { review: newReview, booking: updatedBooking }
+  },
+
+  findBookingByCodeOrPhone(query: string): MockBooking | null {
+    const cleanQuery = query.trim().toLowerCase()
+    if (!cleanQuery) return null
+
+    const numQuery = cleanQuery.replace(/\D/g, '')
+    const bookings = this.getBookings()
+
+    // 1. Coba match kode booking
+    const byCode = bookings.find(
+      (b) => b.booking_code.toLowerCase() === cleanQuery
+    )
+    if (byCode) return byCode
+
+    // 2. Coba match nomor WA (ambil yang terbaru)
+    if (numQuery.length >= 8) {
+      const byPhone = bookings
+        .filter((b) => b.customer_phone.replace(/\D/g, '').includes(numQuery))
+        .sort(
+          (a, b) =>
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        )
+      if (byPhone.length > 0) return byPhone[0]
+    }
+
+    return null
   },
 
   // SESSION
