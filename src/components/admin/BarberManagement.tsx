@@ -9,16 +9,15 @@ import {
   mockDb,
   type MockBarber,
   type MockBranch,
-  type MockAssignment,
 } from '../../mock/mockData'
 import './BarberManagement.css'
 
 type Barber = MockBarber
 type Branch = MockBranch
-type Assignment = MockAssignment
 
 type BarberForm = {
   name: string
+  branch_id: string
   phone: string
   photo_url: string
   description: string
@@ -28,6 +27,7 @@ type BarberTab = 'active' | 'archived'
 
 const emptyForm: BarberForm = {
   name: '',
+  branch_id: '',
   phone: '',
   photo_url: '',
   description: '',
@@ -39,7 +39,6 @@ export default function BarberManagement() {
 
   const [barbers, setBarbers] = useState<Barber[]>(() => mockDb.getBarbers())
   const [branches, setBranches] = useState<Branch[]>(() => mockDb.getBranches())
-  const [assignments, setAssignments] = useState<Assignment[]>(() => mockDb.getAssignments())
 
   const [search, setSearch] = useState('')
   const [activeTab, setActiveTab] = useState<BarberTab>('active')
@@ -53,7 +52,6 @@ export default function BarberManagement() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editingBarber, setEditingBarber] = useState<Barber | null>(null)
   const [form, setForm] = useState<BarberForm>(emptyForm)
-  const [selectedBranch, setSelectedBranch] = useState('')
 
   // ==========================================
   // REFRESH DATA DARI LOCAL STORAGE
@@ -62,26 +60,31 @@ export default function BarberManagement() {
   const refreshData = () => {
     setBarbers(mockDb.getBarbers())
     setBranches(mockDb.getBranches())
-    setAssignments(mockDb.getAssignments())
   }
 
   // ==========================================
-  // SEARCH & SUMMARY
+  // SEARCH & SUMMARY (1 KAPSTER = 1 CABANG)
   // ==========================================
 
+  // Kapster yang relevan sesuai hak akses peran
+  const roleScopedBarbers = useMemo(() => {
+    if (isOwner || !profile?.branch_id) return barbers
+    return barbers.filter((barber) => barber.branch_id === profile.branch_id)
+  }, [barbers, isOwner, profile])
+
   const activeBarbers = useMemo(
-    () => barbers.filter((barber) => !barber.is_archived),
-    [barbers]
+    () => roleScopedBarbers.filter((barber) => !barber.is_archived),
+    [roleScopedBarbers]
   )
 
   const archivedBarbers = useMemo(
-    () => barbers.filter((barber) => barber.is_archived),
-    [barbers]
+    () => roleScopedBarbers.filter((barber) => barber.is_archived),
+    [roleScopedBarbers]
   )
 
-  const activeCount = activeBarbers.filter(
-    (barber) => barber.is_active
-  ).length
+  const activeCount = useMemo(() => {
+    return activeBarbers.filter((barber) => barber.is_active).length
+  }, [activeBarbers])
 
   const archivedCount = archivedBarbers.length
 
@@ -104,13 +107,13 @@ export default function BarberManagement() {
 
   const openAddModal = () => {
     setEditingBarber(null)
-    setForm(emptyForm)
-
-    setSelectedBranch(
-      !isOwner && profile?.branch_id
-        ? profile.branch_id
-        : branches[0]?.id ?? 'manislor'
-    )
+    setForm({
+      ...emptyForm,
+      branch_id:
+        !isOwner && profile?.branch_id
+          ? profile.branch_id
+          : branches[0]?.id ?? 'manislor',
+    })
 
     setError('')
     setSuccess('')
@@ -128,6 +131,7 @@ export default function BarberManagement() {
 
     setForm({
       name: barber.name,
+      branch_id: barber.branch_id,
       phone: barber.phone ?? '',
       photo_url: barber.photo_url ?? '',
       description: barber.description ?? '',
@@ -167,19 +171,24 @@ export default function BarberManagement() {
       if (editingBarber) {
         mockDb.updateBarber(editingBarber.id, {
           name: form.name,
+          branch_id: isOwner ? form.branch_id : editingBarber.branch_id,
           phone: form.phone,
           photo_url: form.photo_url,
           description: form.description,
         })
         setSuccess('Profil kapster berhasil diperbarui.')
       } else {
-        if (!selectedBranch) {
+        const targetBranch = isOwner
+          ? form.branch_id
+          : profile.branch_id || form.branch_id
+
+        if (!targetBranch) {
           throw new Error('Pilih cabang penempatan kapster.')
         }
 
         mockDb.addBarber({
           name: form.name,
-          branch_id: selectedBranch,
+          branch_id: targetBranch,
           phone: form.phone,
           photo_url: form.photo_url,
           description: form.description,
@@ -201,52 +210,6 @@ export default function BarberManagement() {
     } finally {
       setSaving(false)
     }
-  }
-
-  // ==========================================
-  // ADD BRANCH ASSIGNMENT
-  // ==========================================
-
-  const addAssignment = (barberId: string, branchId: string) => {
-    setError('')
-    setSuccess('')
-
-    try {
-      if (!branchId) return
-
-      mockDb.addAssignment(barberId, branchId)
-      setSuccess('Penempatan cabang berhasil ditambahkan.')
-      refreshData()
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Gagal menambahkan penempatan.'
-      )
-    }
-  }
-
-  // ==========================================
-  // TOGGLE BRANCH ASSIGNMENT
-  // ==========================================
-
-  const toggleAssignment = (assignment: Assignment) => {
-    const nextStatus = !assignment.is_active
-
-    if (
-      !window.confirm(
-        `Apakah kamu yakin ingin ${
-          nextStatus ? 'mengaktifkan' : 'menonaktifkan'
-        } penempatan ini?`
-      )
-    ) return
-
-    setError('')
-    setSuccess('')
-
-    mockDb.toggleAssignment(assignment.id)
-    setSuccess('Status penempatan berhasil diperbarui.')
-    refreshData()
   }
 
   // ==========================================
@@ -406,9 +369,15 @@ export default function BarberManagement() {
       {/* PAGE HEADER */}
       <header className="barber-page-header">
         <div>
-          <span className="barber-eyebrow">MANAGEMENT PORTAL</span>
+          <span className="barber-eyebrow">
+            {isOwner ? 'OWNER PORTAL · ALL BRANCHES' : `CABANG ${profile.branch_id?.toUpperCase()}`}
+          </span>
           <h1>Manajemen Kapster</h1>
-          <p>Kelola profil dan penempatan kapster Cahaya Barber.</p>
+          <p>
+            {isOwner
+              ? 'Kelola profil dan penempatan kapster di seluruh cabang Cahaya Barber.'
+              : `Kelola kapster yang bertugas di Cabang ${getBranchName(profile.branch_id || '')}.`}
+          </p>
         </div>
 
         {activeTab === 'active' && (
@@ -425,19 +394,28 @@ export default function BarberManagement() {
       {/* SUMMARY */}
       <section className="barber-summary">
         <div className="barber-summary-card">
-          <span>TOTAL KAPSTER</span>
+          <span>{isOwner ? 'TOTAL KAPSTER' : 'TOTAL KAPSTER CABANG'}</span>
           <strong>{activeBarbers.length}</strong>
         </div>
 
         <div className="barber-summary-card">
-          <span>KAPSTER AKTIF</span>
+          <span>{isOwner ? 'KAPSTER AKTIF' : 'KAPSTER TUGAS AKTIF'}</span>
           <strong>{activeCount}</strong>
         </div>
 
-        <div className="barber-summary-card">
-          <span>TOTAL CABANG</span>
-          <strong>{branches.length}</strong>
-        </div>
+        {isOwner ? (
+          <div className="barber-summary-card">
+            <span>TOTAL CABANG</span>
+            <strong>{branches.length}</strong>
+          </div>
+        ) : (
+          <div className="barber-summary-card">
+            <span>CABANG TUGAS</span>
+            <strong style={{ fontSize: '18px', color: '#b88b43' }}>
+              {getBranchName(profile.branch_id || '')}
+            </strong>
+          </div>
+        )}
 
         {isOwner && (
           <div className="barber-summary-card barber-summary-archived">
@@ -526,7 +504,7 @@ export default function BarberManagement() {
                 <tr>
                   <th>KAPSTER</th>
                   <th>TELEPON</th>
-                  <th>PENEMPATAN</th>
+                  <th>CABANG</th>
                   <th>STATUS</th>
                   {activeTab === 'archived' && <th>TANGGAL ARSIP</th>}
                   <th>AKSI</th>
@@ -535,31 +513,6 @@ export default function BarberManagement() {
 
               <tbody>
                 {filteredBarbers.map((barber) => {
-                  const barberAssignments = assignments.filter(
-                    (item) => item.barber_id === barber.id
-                  )
-
-                  const activeAssignments = barberAssignments.filter(
-                    (item) => item.is_active
-                  )
-
-                  const inactiveAssignments = barberAssignments.filter(
-                    (item) => !item.is_active
-                  )
-
-                  const assignedBranchIds = barberAssignments.map(
-                    (item) => item.branch_id
-                  )
-
-                  const availableBranches = branches.filter(
-                    (branch) => !assignedBranchIds.includes(branch.id)
-                  )
-
-                  const canAssign =
-                    !barber.is_archived &&
-                    barber.is_active &&
-                    (isOwner || profile.branch_id !== null)
-
                   const isUpdating = updatingBarberId === barber.id
 
                   return (
@@ -592,80 +545,11 @@ export default function BarberManagement() {
                       {/* PHONE */}
                       <td>{barber.phone || '—'}</td>
 
-                      {/* ASSIGNMENTS */}
+                      {/* CABANG (1 KAPSTER = 1 CABANG) */}
                       <td>
-                        <div className="barber-assignments">
-                          {activeAssignments.length === 0 &&
-                          inactiveAssignments.length === 0 ? (
-                            <span className="barber-muted">
-                              Belum ditempatkan
-                            </span>
-                          ) : null}
-
-                          {activeAssignments.map((assignment) => (
-                            <span
-                              className="barber-branch-tag"
-                              key={assignment.id}
-                            >
-                              {getBranchName(assignment.branch_id)}
-                            </span>
-                          ))}
-
-                          {inactiveAssignments.map((assignment) => (
-                            <span
-                              className="barber-branch-tag barber-branch-inactive"
-                              key={assignment.id}
-                            >
-                              {getBranchName(assignment.branch_id)} · Nonaktif
-                            </span>
-                          ))}
-
-                          {canAssign && availableBranches.length > 0 && (
-                            <select
-                              className="barber-assign-select"
-                              value=""
-                              aria-label={`Tambah cabang untuk ${barber.name}`}
-                              onChange={(event) => {
-                                if (event.target.value) {
-                                  addAssignment(barber.id, event.target.value)
-                                }
-                              }}
-                            >
-                              <option value="">+ Cabang</option>
-                              {availableBranches.map((branch) => (
-                                <option key={branch.id} value={branch.id}>
-                                  {branch.name}
-                                </option>
-                              ))}
-                            </select>
-                          )}
-
-                          {/* TOGGLE ACTIONS */}
-                          {!barber.is_archived &&
-                            inactiveAssignments.map((item) => (
-                              <button
-                                key={`reactivate-${item.id}`}
-                                type="button"
-                                className="barber-reactivate"
-                                onClick={() => toggleAssignment(item)}
-                              >
-                                Aktifkan {getBranchName(item.branch_id)}
-                              </button>
-                            ))}
-
-                          {!barber.is_archived &&
-                            activeAssignments.map((item) => (
-                              <button
-                                key={`disable-${item.id}`}
-                                type="button"
-                                className="barber-disable-assignment"
-                                onClick={() => toggleAssignment(item)}
-                                title="Nonaktifkan penempatan"
-                              >
-                                Nonaktifkan {getBranchName(item.branch_id)}
-                              </button>
-                            ))}
-                        </div>
+                        <span className="barber-branch-tag">
+                          {getBranchName(barber.branch_id)}
+                        </span>
                       </td>
 
                       {/* STATUS */}
@@ -724,8 +608,8 @@ export default function BarberManagement() {
                                     {isUpdating
                                       ? 'Memproses...'
                                       : barber.is_active
-                                      ? 'Nonaktifkan Profil'
-                                      : 'Aktifkan Profil'}
+                                      ? 'Nonaktifkan'
+                                      : 'Aktifkan'}
                                   </button>
 
                                   <button
@@ -833,12 +717,14 @@ export default function BarberManagement() {
                 rows={3}
               />
 
-              {!editingBarber && (
-                <>
-                  <label>Cabang Penempatan *</label>
+              <label>Cabang Penempatan *</label>
+              {isOwner ? (
+                <div>
                   <select
-                    value={selectedBranch}
-                    onChange={(event) => setSelectedBranch(event.target.value)}
+                    value={form.branch_id}
+                    onChange={(event) =>
+                      setForm({ ...form, branch_id: event.target.value })
+                    }
                     required
                   >
                     <option value="">Pilih cabang</option>
@@ -848,7 +734,45 @@ export default function BarberManagement() {
                       </option>
                     ))}
                   </select>
-                </>
+                  {editingBarber && (
+                    <small
+                      style={{
+                        color: '#888',
+                        display: 'block',
+                        marginTop: '4px',
+                        fontSize: '11px',
+                      }}
+                    >
+                      Owner dapat memutasi kapster ini ke cabang lain.
+                    </small>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <input
+                    type="text"
+                    value={getBranchName(profile.branch_id || form.branch_id)}
+                    disabled
+                    style={{
+                      background: '#f2f0ea',
+                      color: '#444',
+                      fontWeight: 600,
+                      cursor: 'not-allowed',
+                      border: '1px solid #d5d1c8',
+                    }}
+                  />
+                  <small
+                    style={{
+                      color: '#777',
+                      display: 'block',
+                      marginTop: '4px',
+                      fontSize: '11px',
+                    }}
+                  >
+                    Kapster terdaftar di Cabang{' '}
+                    {getBranchName(profile.branch_id || form.branch_id)}.
+                  </small>
+                </div>
               )}
 
               {error && (
